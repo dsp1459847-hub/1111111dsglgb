@@ -1,9 +1,10 @@
 import pandas as pd
 import streamlit as st
 from collections import defaultdict
+import io
 
 # Page Config
-st.set_page_config(layout="wide", page_title="MAYA AI TURBO")
+st.set_page_config(layout="wide", page_title="MAYA AI TURBO FIXED")
 
 # --- CSS for Speed & Layout ---
 st.markdown("""
@@ -15,7 +16,6 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-@st.cache_data # Speed badhane ke liye cache use kiya
 def clean_val(val):
     if pd.isna(val): return ""
     v = str(val).replace('.0', '').strip().upper()
@@ -23,28 +23,32 @@ def clean_val(val):
     v_clean = "".join(filter(str.isdigit, v))
     return v_clean.zfill(2)[-2:] if v_clean else ""
 
-# 32 Patterns pre-calculated for speed
+# 32 Patterns pre-calculated
 PAT = [(0,1),(0,-1),(1,0),(-1,0),(0,5),(0,-5),(5,0),(-5,0),(1,4),(-1,-4),(4,1),(-4,-1),(1,6),(-1,-6),(6,1),(-6,-1),(1,1),(-1,-1),(1,-1),(-1,1),(5,5),(-5,-5),(5,-5),(5,-5),(1,5),(-1,-5),(1,-5),(-1,5),(5,1),(-5,-1),(5,-1),(-5,1)]
 
 def apply_32(v):
     if not v or len(v) != 2: return set()
-    A, B = int(v[0]), int(v[1])
-    return {f"{(A+da)%10}{(B+db)%10}" for da, db in PAT}
+    try:
+        A, B = int(v[0]), int(v[1])
+        return {f"{(A+da)%10}{(B+db)%10}" for da, db in PAT}
+    except:
+        return set()
 
+# Cache logic fixed to use StringIO
 @st.cache_data
 def get_turbo_prediction(df_json, t_date, target_shift):
-    df = pd.read_json(df_json)
+    df = pd.read_json(io.StringIO(df_json)) # FIXED: io.StringIO use kiya string read karne ke liye
+    df['DATE'] = pd.to_datetime(df['DATE'])
     hist = df[df['DATE'] < pd.to_datetime(t_date)].tail(365)
     if len(hist) < 61: return set()
 
     all_shifts = ['DS', 'FD', 'GD', 'GL', 'DB', 'SG']
     serial_hits = []
 
-    # Optimization: Pattern match only top lookbacks
     for src in all_shifts:
         for lb in range(1, 61):
             hits = 0
-            # Step size 2 for faster audit without losing much accuracy
+            # Sampling speed ke liye 4 rakhi hai
             for i in range(len(hist)-1, 60, -4): 
                 tgt = clean_val(hist.iloc[i][target_shift])
                 prev = clean_val(hist.iloc[i-lb][src])
@@ -70,28 +74,31 @@ def get_turbo_prediction(df_json, t_date, target_shift):
 uploaded_file = st.file_uploader("Upload 0DSP0 File", type=['xlsx','csv'], label_visibility="collapsed")
 
 if uploaded_file:
-    df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-    df['DATE'] = pd.to_datetime(df['DATE'])
-    df = df.sort_values('DATE').reset_index(drop=True)
-    df_json = df.to_json() # For caching
+    df_raw = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+    df_raw['DATE'] = pd.to_datetime(df_raw['DATE'])
+    df_raw = df_raw.sort_values('DATE').reset_index(drop=True)
     
+    # Cleaning data before JSON conversion
     shifts = ['DS', 'FD', 'GD', 'GL', 'DB', 'SG']
-    t_date = st.date_input("Target Date", df['DATE'].max())
+    for s in shifts:
+        df_raw[s] = df_raw[s].apply(clean_val)
+        
+    df_json = df_raw.to_json() # Pre-cleaned JSON
+    
+    t_date = st.date_input("Target Date", df_raw['DATE'].max())
 
-    st.write(f"### ⚡ MAYA TURBO DASHBOARD")
+    st.write(f"### ⚡ MAYA TURBO DASHBOARD (FIXED)")
 
     cols = st.columns(6)
-    actual_row = df[df['DATE'] == pd.to_datetime(t_date)]
+    actual_row = df_raw[df_raw['DATE'] == pd.to_datetime(t_date)]
 
     for i, s_name in enumerate(shifts):
         with cols[i]:
             st.markdown(f"<div class='shift-header'>{s_name}</div>", unsafe_allow_html=True)
             
-            # Prediction
-            preds = get_turbo_prediction(df_json, t_date, s_name)
+            preds = get_turbo_prediction(df_json, str(t_date), s_name)
             
-            # History/Result (Bagal mein ya niche)
-            actual = clean_val(actual_row[s_name].values[0]) if not actual_row.empty else "Waiting"
+            actual = actual_row[s_name].values[0] if not actual_row.empty else ""
             st.markdown(f"<div class='result-box'>Result: {actual if actual else '--'}</div>", unsafe_allow_html=True)
             
             html = "<div class='compact-grid' style='margin-top:5px;'>"
@@ -103,16 +110,15 @@ if uploaded_file:
             st.markdown(html, unsafe_allow_html=True)
 
     st.markdown("---")
-    # Audit Table
     st.subheader("📜 11-Day Live Audit (Fast View)")
-    hist_view = df[df['DATE'] <= pd.to_datetime(t_date)].tail(11).copy().sort_values('DATE', ascending=False)
+    hist_view = df_raw[df_raw['DATE'] <= pd.to_datetime(t_date)].tail(11).copy().sort_values('DATE', ascending=False)
     
     audit_list = []
     for _, row in hist_view.iterrows():
         day_res = {"Date": row['DATE'].strftime('%d-%m'), "Day": row['DATE'].strftime('%a')}
         for s in shifts:
-            p_list = get_turbo_prediction(df_json, row['DATE'], s)
-            val = clean_val(row[s])
+            p_list = get_turbo_prediction(df_json, str(row['DATE'].date()), s)
+            val = row[s]
             day_res[s] = f"✅ {val}" if val in p_list and val != "" else val
         audit_list.append(day_res)
     
