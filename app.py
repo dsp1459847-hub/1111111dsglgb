@@ -2,15 +2,15 @@ import pandas as pd
 import streamlit as st
 from collections import Counter, defaultdict
 
-st.set_page_config(layout="wide", page_title="MAYA AI: AUDIT PRO")
+st.set_page_config(layout="wide", page_title="MAYA AI: NO-MINUS DASHBOARD")
 
-# --- Custom Styling (Numbers ke size ke hisab se dabbe) ---
+# --- Compact Styling ---
 st.markdown("""
     <style>
     .compact-grid { display:grid; grid-template-columns: repeat(5, 1fr); gap: 2px; }
-    .item-common { background: #FFD700; color: black; font-size: 14px; padding: 4px; text-align: center; border: 1.5px solid gold; border-radius: 3px; font-weight: bold; }
-    .item-unique { background: #f0f2f6; color: black; font-size: 13px; padding: 4px; text-align: center; border: 1px solid #ddd; border-radius: 2px; }
-    .header-tag { text-align: center; font-weight: bold; padding: 3px; border-radius: 4px; margin-bottom: 5px; }
+    .item-top { background: #FFD700; color: black; font-size: 14px; padding: 4px; text-align: center; border: 2px solid #FF4B4B; border-radius: 4px; font-weight: bold; }
+    .item-normal { background: #f0f2f6; color: black; font-size: 13px; padding: 4px; text-align: center; border: 1px solid #ddd; border-radius: 2px; }
+    .header-label { background: #1E1E1E; color: gold; text-align: center; font-weight: bold; padding: 4px; border-radius: 4px; margin-top: 10px;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -34,29 +34,30 @@ def get_golden_8(df, t_date):
     counts = Counter(all_vals)
     return {num for num, count in counts.most_common(8)}
 
-# Lookback Config
-TOP_DAYS = {'DS': [4, 6, 9], 'GL': [3, 4, 8], 'GD': [1, 5, 8]}
-FLOP_DAYS = {'DS': [1, 3, 7], 'GL': [7, 10, 5], 'GD': [2, 9, 10]}
+# Lookback Configuration
+DAYS_CONFIG = {'DS': [4, 6, 9, 5, 8], 'GL': [3, 4, 8, 1, 2], 'GD': [1, 5, 8, 3, 7]}
 
-def get_audit_predictions(df, t_date):
+def get_no_minus_predictions(df, t_date):
     hist = df[df['DATE'] < pd.to_datetime(t_date)]
     if hist.empty: return set(), set()
     
-    # VIP Logic (Minus lagane ke baad)
-    p_ds = set().union(*(apply_32(hist.iloc[-lb]['DS']) for lb in TOP_DAYS['DS'] if len(hist)>=lb))
-    p_gl = set().union(*(apply_32(hist.iloc[-lb]['GL']) for lb in TOP_DAYS['GL'] if len(hist)>=lb))
-    p_gd = set().union(*(apply_32(hist.iloc[-lb]['GD']) for lb in TOP_DAYS['GD'] if len(hist)>=lb))
-    neg = set().union(*(apply_32(hist.iloc[-lb][s]) for s, days in FLOP_DAYS.items() for lb in days if len(hist)>=lb))
+    # Saare anko ka pool banana (Koi Minus nahi)
+    full_pool = set()
+    for src, days in DAYS_CONFIG.items():
+        for lb in days:
+            if len(hist) >= lb:
+                full_pool.update(apply_32(hist.iloc[-lb][src]))
     
-    vip_pool = (p_ds | p_gl | p_gd) - neg
     g8 = get_golden_8(df, t_date)
     
-    common = vip_pool.intersection(g8)
-    unique = vip_pool.difference(g8)
-    return common, unique
+    # Priority Separation
+    top_match = full_pool.intersection(g8)
+    remaining = full_pool.difference(g8)
+    
+    return top_match, remaining
 
 # --- UI Setup ---
-uploaded_file = st.file_uploader("Upload Excel", type=['xlsx','csv'], label_visibility="collapsed")
+uploaded_file = st.file_uploader("Upload File", type=['xlsx','csv'], label_visibility="collapsed")
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
@@ -64,51 +65,50 @@ if uploaded_file:
     df = df.sort_values('DATE').reset_index(drop=True)
     for c in ['DS','FD','GD','GL','DB','SG']: df[c] = df[c].apply(get_val_str)
     
-    t_date = st.date_input("Select Target Date", df['DATE'].max())
+    t_date = st.date_input("Target Date", df['DATE'].max())
     actual_ds = df[df['DATE'] == pd.to_datetime(t_date)]['DS'].values[0] if not df[df['DATE'] == pd.to_datetime(t_date)].empty else ""
 
-    common, unique = get_audit_predictions(df, t_date)
+    top_ank, rest_ank = get_no_minus_predictions(df, t_date)
 
-    st.write(f"### 🎯 DS Prediction Dashboard: {t_date.strftime('%d-%b')} ({t_date.strftime('%A')})")
+    st.write(f"### 🎯 DS Dashboard: {t_date.strftime('%d-%b')} ({t_date.strftime('%A')})")
     
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        st.markdown("<div class='header-tag' style='background:gold; color:black;'>🏆 COMMON (VIP + Golden)</div>", unsafe_allow_html=True)
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.markdown("<div class='header-label'>👑 TOP MATCH (Golden 8)</div>", unsafe_allow_html=True)
         html = "<div class='compact-grid'>"
-        for n in sorted(list(common)):
+        for n in sorted(list(top_ank)):
             bg = "#28a745" if n == actual_ds else "#FFD700"
-            html += f"<div class='item-common' style='background:{bg};'>{n}</div>"
+            html += f"<div class='item-top' style='background:{bg};'>{n}</div>"
         html += "</div>"
         st.markdown(html, unsafe_allow_html=True)
 
-    with c2:
-        st.markdown("<div class='header-tag' style='background:#007bff; color:white;'>💎 UNIQUE VIP (Support)</div>", unsafe_allow_html=True)
-        html = "<div class='compact-grid' style='grid-template-columns: repeat(8, 1fr);'>"
-        for n in sorted(list(unique)):
+    with col2:
+        st.markdown("<div class='header-label'>💎 SUPPORT POOL (All Patterns)</div>", unsafe_allow_html=True)
+        html = "<div class='compact-grid' style='grid-template-columns: repeat(10, 1fr);'>"
+        for n in sorted(list(rest_ank)):
             bg = "#28a745" if n == actual_ds else "#f0f2f6"
-            html += f"<div class='item-unique' style='background:{bg};'>{n}</div>"
+            html += f"<div class='item-normal' style='background:{bg};'>{n}</div>"
         html += "</div>"
         st.markdown(html, unsafe_allow_html=True)
 
     st.markdown("---")
-    # --- 11-Day Bar & Date Audit History ---
-    st.subheader("📜 11-Day Performance Audit (Bar + Date wise)")
+    # --- 11-Day History (Correct Bar + Date) ---
+    st.subheader("📜 11-Day Live Audit (No-Minus Mode)")
     hist_view = df[df['DATE'] <= pd.to_datetime(t_date)].tail(11).copy().sort_values('DATE', ascending=False)
     
     audit_data = []
     for _, row in hist_view.iterrows():
-        com, uni = get_audit_predictions(df, row['DATE'])
+        top, rest = get_no_minus_predictions(df, row['DATE'])
         val = row['DS']
         status = val
-        if val in com: status = f"⭐ {val} (Common Hit)"
-        elif val in uni: status = f"🟢 {val} (VIP Hit)"
+        if val in top: status = f"⭐ {val} (TOP HIT)"
+        elif val in rest: status = f"✅ {val} (Pool Hit)"
         
         audit_data.append({
             "Tarikh": row['DATE'].strftime('%d-%m'),
-            "Bar (Day)": row['DATE'].strftime('%A'),
+            "Bar": row['DATE'].strftime('%A'),
             "DS Result": status,
             "GL": row['GL'], "GD": row['GD'], "FD": row['FD']
         })
-    
     st.table(pd.DataFrame(audit_data))
     
