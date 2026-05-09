@@ -1,8 +1,8 @@
 import pandas as pd
 import streamlit as st
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict  # <-- Yeh line error theek karegi
 
-st.set_page_config(layout="wide", page_title="MAYA AI: TIERED DYNAMIC")
+st.set_page_config(layout="wide", page_title="MAYA AI: TIERED DYNAMIC FIXED")
 
 # --- CSS for High-Pro Display ---
 st.markdown("""
@@ -16,25 +16,31 @@ st.markdown("""
 
 def get_val_str(val):
     if pd.isna(val) or str(val).strip() in ["", "XX", "nan"]: return ""
-    return str(val).replace('.0','').strip().zfill(2)[-2:]
+    # Sabhi anko ko 2 digit format me lane ke liye
+    v = str(val).replace('.0','').strip()
+    return v.zfill(2)[-2:] if v.isdigit() else ""
 
 def apply_32(val_str):
-    if not val_str or len(str(val_str)) != 2 or not str(val_str).isdigit(): return set()
+    if not val_str or len(str(val_str)) != 2 or not str(val_str).isdigit(): 
+        return set()
+    val_str = str(val_str)
     A, B = int(val_str[0]), int(val_str[1])
     PAT = [(0,1),(0,-1),(1,0),(-1,0),(0,5),(0,-5),(5,0),(-5,0),(1,4),(-1,-4),(4,1),(-4,-1),(1,6),(-1,-6),(6,1),(-6,-1),(1,1),(-1,-1),(1,-1),(-1,1),(5,5),(-5,-5),(5,-5),(5,-5),(1,5),(-1,-5),(1,-5),(-1,5),(5,1),(-5,-1),(5,-1),(-5,1)]
     return {f"{(A+da)%10}{(B+db)%10}" for da, db in PAT}
 
 def get_tiered_logic(df, t_date, target_shift):
+    # Pichle 1 saal ka data check karna
     hist = df[df['DATE'] < pd.to_datetime(t_date)].tail(365)
     if len(hist) < 60: return set()
 
     serial_hits = []
     shifts_to_check = ['DS', 'FD', 'GD', 'GL', 'DB', 'SG']
     
-    # 1. Full Audit of all 360 combinations (6 shifts * 60 days)
+    # 1. Full Audit (6 shifts * 60 days)
     for src in shifts_to_check:
         for lb in range(1, 61):
             hits = 0
+            # History me loop chala kar check karna ki pattern kitni baar aya
             for i in range(len(hist)-1, 60, -1):
                 tgt = get_val_str(hist.iloc[i][target_shift])
                 src_v = get_val_str(hist.iloc[i-lb][src])
@@ -45,22 +51,18 @@ def get_tiered_logic(df, t_date, target_shift):
 
     if not serial_hits: return set()
     
-    # Sort by hits descending
+    # Sorting logic
     serial_hits.sort(key=lambda x: x[1], reverse=True)
     max_h = serial_hits[0][1]
     min_h = serial_hits[-1][1]
 
-    # 2. Dynamic Topper Selection (Tied Winners)
-    # Wo saare din lenge jinka score top score ke barabar ya uske behad kareeb ho
-    toppers = [x for x in serial_hits if x[1] >= max_h * 0.9] # Top 10% bracket
-    
-    # 3. Tiered Loser Selection
-    # Agar bottom score 10% se upar hai, toh hum "Relative Losers" (Sabse niche wale) uthayenge
-    # Taki hamesha kuch na kuch 'Minus' karne ke liye mile
-    losers = [x for x in serial_hits if x[1] <= min_h * 1.1] # Bottom 10% bracket
+    # Dynamic Thresholds (Top 10% and Bottom 10% hierarchy)
+    toppers = [x for x in serial_hits if x[1] >= max_h * 0.9]
+    losers = [x for x in serial_hits if x[1] <= min_h * 1.1]
 
     top_pool = set()
     for (src, lb), h in toppers:
+        # Target date se thik piche wale lookback anko ko uthana
         val = df[df['DATE'] < pd.to_datetime(t_date)].iloc[-lb][src]
         top_pool.update(apply_32(get_val_str(val)))
 
@@ -69,6 +71,7 @@ def get_tiered_logic(df, t_date, target_shift):
         val = df[df['DATE'] < pd.to_datetime(t_date)].iloc[-lb][src]
         minus_pool.update(apply_32(get_val_str(val)))
 
+    # Final Filtered Result
     return top_pool - minus_pool
 
 # --- UI Layout ---
@@ -81,7 +84,7 @@ if uploaded_file:
     shifts = ['DS', 'FD', 'GD', 'GL', 'DB', 'SG']
 
     t_date = st.date_input("Target Date", df['DATE'].max())
-    st.write(f"### ⚡ Tiered Dynamic Engine (Hierarchy Mode): {t_date.strftime('%d-%b-%Y')}")
+    st.write(f"### ⚡ Tiered Dynamic Engine (Fix Mode): {t_date.strftime('%d-%b-%Y')}")
 
     cols = st.columns(6)
     actual_row = df[df['DATE'] == pd.to_datetime(t_date)]
@@ -94,6 +97,7 @@ if uploaded_file:
             
             html = "<div class='compact-grid' style='margin-top:5px;'>"
             for p in sorted(list(preds)):
+                # Matching green highlight logic
                 bg = "#28a745" if p == actual and actual != "" else "#222"
                 color = "white" if p == actual else "#aaa"
                 html += f"<div class='item-box' style='background:{bg}; color:{color}; border:0.5px solid #444;'>{p}</div>"
